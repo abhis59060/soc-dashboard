@@ -1,0 +1,6 @@
+{
+  "backend_url": "http://localhost:8000",
+  "poll_interval": 5,
+  "log_types": ["Security", "System", "Application"],
+  "max_events_per_poll": 50
+}

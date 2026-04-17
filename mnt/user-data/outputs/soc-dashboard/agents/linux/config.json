@@ -1,0 +1,10 @@
+{
+  "backend_url": "http://localhost:8000",
+  "poll_interval": 10,
+  "log_files": {
+    "auth": "/var/log/auth.log",
+    "syslog": "/var/log/syslog",
+    "firewall": "/var/log/ufw.log"
+  },
+  "max_lines_per_poll": 100
+}
