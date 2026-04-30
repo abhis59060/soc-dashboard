@@ -47,21 +47,11 @@ export const Dashboard = () => {
   const [error, setError] = useState(null);
   const [isPurging, setIsPurging] = useState(false);
 
-  const handlePurge = async () => {
-    if (window.confirm("CRITICAL: This will delete all logs, alerts, and reset all system statistics. Are you sure?")) {
-      setIsPurging(true);
-      try {
-        await purgeData();
-        // Force refresh data
-        window.location.reload();
-      } catch (err) {
-        console.error("Purge failed:", err);
-        alert("Failed to purge system data.");
-      } finally {
-        setIsPurging(false);
-      }
-    }
-  };
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedHost, setSelectedHost] = useState(null);
+  const [hostLogs, setHostLogs] = useState([]);
+  const [modalLoading, setModalLoading] = useState(false);
 
   // Audio Feedback
   const playAlertSound = () => {
@@ -86,11 +76,131 @@ export const Dashboard = () => {
     }
   };
 
-  // Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedHost, setSelectedHost] = useState(null);
-  const [hostLogs, setHostLogs] = useState([]);
-  const [modalLoading, setModalLoading] = useState(false);
+  const fetchDashboardData = async () => {
+    try {
+      // Individual try-catches to ensure one failure doesn't break the whole dashboard
+      try {
+        const statsData = await getStats();
+        if (statsData) {
+          setStats({
+            totalLogs: statsData.total_logs,
+            highAlerts: statsData.severity_breakdown?.high || 0,
+            mediumAlerts: statsData.severity_breakdown?.medium || 0,
+            lowAlerts: statsData.severity_breakdown?.low || 0,
+            windowsEvents: statsData.os_breakdown?.windows || 0,
+            last24h: statsData.total_logs
+          });
+
+          if (statsData.top_threat_actors) {
+            setChartData(prev => ({
+              ...prev,
+              topThreatIPs: statsData.top_threat_actors.map(actor => ({
+                ip: actor.host,
+                count: actor.count,
+                os: actor.os,
+                country: actor.host,
+                threat: 'Security Events',
+                is_malicious: actor.is_malicious
+              }))
+            }));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch dashboard stats:", err);
+      }
+
+      try {
+        const nodesData = await getNodes();
+        if (nodesData && nodesData.hosts) {
+          // Filter out dummy nodes
+          const realHosts = nodesData.hosts.filter(h => 
+            h.hostname && 
+            !["SYSTEM-ANALYST", "SYSTEM", "ANALYST"].includes(h.hostname.toUpperCase()) &&
+            !h.hostname.toUpperCase().includes("SYSTEM") &&
+            !h.hostname.toUpperCase().includes("ANALYST") &&
+            (h.os === 'windows')
+          );
+          
+          setAgents(realHosts);
+          setOnlineNodes(realHosts.filter(h => h.status === 'online').length);
+          setTotalNodes(realHosts.length);
+        } else {
+          setAgents([]);
+          setOnlineNodes(0);
+          setTotalNodes(0);
+        }
+      } catch (err) {
+        console.error("CRITICAL: Failed to fetch node stats:", err.message);
+      }
+
+      try {
+        const healthData = await getNetworkHealth();
+        if (healthData) {
+          setNetworkHealth(healthData);
+          setGlobalAlert(healthData.global_alert);
+          
+          // Trigger audio if new high alerts detected
+          if (healthData.high_alerts_5m > 0) {
+            playAlertSound();
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch network health:", err);
+      }
+
+      try {
+        const timelineData = await getTimeline();
+        if (timelineData && timelineData.timeline) {
+          setTimeline(timelineData.timeline);
+        }
+      } catch (err) {
+        console.error("Failed to fetch timeline:", err);
+      }
+
+      setError(null);
+    } catch (error) {
+      console.error("Dashboard fetch loop error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePurge = async () => {
+    if (window.confirm("CRITICAL: This will delete all logs, alerts, and reset all system statistics. Are you sure?")) {
+      setIsPurging(true);
+      try {
+        await purgeData();
+        
+        // Reset local state immediately
+        setStats({
+          totalLogs: 0,
+          highAlerts: 0,
+          mediumAlerts: 0,
+          lowAlerts: 0,
+          windowsEvents: 0,
+          last24h: 0
+        });
+        setAgents([]);
+        setOnlineNodes(0);
+        setTotalNodes(0);
+        setTimeline([]);
+        setChartData({
+          alertsByHour: [],
+          osDistribution: [],
+          topThreatIPs: []
+        });
+
+        // Fetch fresh data from backend
+        await fetchDashboardData();
+        
+      } catch (err) {
+        console.error("Purge failed:", err);
+        alert("Failed to purge system data.");
+      } finally {
+        setIsPurging(false);
+      }
+    }
+  };
 
   const handleHostClick = async (hostInfo) => {
     setSelectedHost(hostInfo);
@@ -108,91 +218,6 @@ export const Dashboard = () => {
   };
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        // Individual try-catches to ensure one failure doesn't break the whole dashboard
-        try {
-          const statsData = await getStats();
-          if (statsData) {
-            setStats({
-              totalLogs: statsData.total_logs,
-              highAlerts: statsData.severity_breakdown?.high || 0,
-              mediumAlerts: statsData.severity_breakdown?.medium || 0,
-              lowAlerts: statsData.severity_breakdown?.low || 0,
-              windowsEvents: statsData.os_breakdown?.windows || 0,
-              last24h: statsData.total_logs
-            });
-
-            if (statsData.top_threat_actors) {
-              setChartData(prev => ({
-                ...prev,
-                topThreatIPs: statsData.top_threat_actors.map(actor => ({
-                  ip: actor.host,
-                  count: actor.count,
-                  os: actor.os,
-                  country: actor.host,
-                  threat: 'Security Events',
-                  is_malicious: actor.is_malicious
-                }))              }));
-            }
-          }
-        } catch (err) {
-          console.error("Failed to fetch dashboard stats:", err);
-        }
-
-        try {
-          const nodesData = await getNodes();
-          if (nodesData && nodesData.hosts) {
-            // Filter out dummy nodes
-            const realHosts = nodesData.hosts.filter(h => 
-              h.hostname && 
-              !["SYSTEM-ANALYST", "SYSTEM", "ANALYST"].includes(h.hostname.toUpperCase()) &&
-              !h.hostname.toUpperCase().includes("SYSTEM") &&
-              !h.hostname.toUpperCase().includes("ANALYST") &&
-              (h.os === 'windows')
-            );
-            
-            console.log("UI UPDATE:", realHosts.length);
-            setAgents(realHosts);
-            setOnlineNodes(realHosts.filter(h => h.status === 'online').length);
-            setTotalNodes(realHosts.length);
-          }
-        } catch (err) {
-          console.error("CRITICAL: Failed to fetch node stats:", err.message);
-        }
-
-        try {
-          const healthData = await getNetworkHealth();
-          if (healthData) {
-            setNetworkHealth(healthData);
-            setGlobalAlert(healthData.global_alert);
-            
-            // Trigger audio if new high alerts detected
-            if (healthData.high_alerts_5m > 0) {
-              playAlertSound();
-            }
-          }
-        } catch (err) {
-          console.error("Failed to fetch network health:", err);
-        }
-
-        try {
-          const timelineData = await getTimeline();
-          if (timelineData && timelineData.timeline) {
-            setTimeline(timelineData.timeline);
-          }
-        } catch (err) {
-          console.error("Failed to fetch timeline:", err);
-        }
-
-        setError(null);
-      } catch (error) {
-        console.error("Dashboard fetch loop error:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchDashboardData();
     const interval = setInterval(fetchDashboardData, 5000); 
     return () => clearInterval(interval);

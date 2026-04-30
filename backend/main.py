@@ -112,28 +112,10 @@ async def ingest_log(log_entry: LogEntry):
         should_alert = False
         alert_reason = ""
         
-        # 1. Custom Alert Rule Match (Highest Priority)
+        # ONLY trigger security alert if it matches a custom rule from MongoDB
         if is_custom_rule:
             should_alert = True
             alert_reason = f"Custom Alert Rule Triggered: Event ID {event_id_str}"
-
-        # 2. Immediate Alert for Event 666 (Malicious Activity)
-        elif normalized_log.get("event_id") in [666, "666"]:
-            should_alert = True
-            alert_reason = "Confirmed Malicious Activity (Event 666)"
-        
-        # 3. Brute-Force Detection: > 5 Event 4625 (Failed Login) within 1 minute for same host
-        elif normalized_log.get("event_id") in [4625, "4625"]:
-            one_min_ago = datetime.utcnow() - timedelta(minutes=1)
-            failed_count = await db.logs_collection.count_documents({
-                "host": normalized_log["host"],
-                "event_id": {"$in": [4625, "4625"]},
-                "timestamp": {"$gte": one_min_ago}
-            })
-            
-            if failed_count > 5:
-                should_alert = True
-                alert_reason = f"Brute Force Detected: {failed_count} failed logins in 1 min"
 
         if should_alert:
             alert_data = {
@@ -302,14 +284,20 @@ async def get_system_stats(host: Optional[str] = None):
 @app.delete("/api/logs/purge")
 async def purge_logs():
     """
-    Delete ALL logs from the database.
+    Delete ALL logs and offline agents from the database.
     """
     try:
-        deleted_count = await db.clear_all_logs()
+        # Delete logs
+        deleted_logs = await db.clear_all_logs()
+        
+        # Delete offline/inactive agents
+        deleted_agents = await db.delete_offline_agents()
+        
         return {
             "status": "success",
-            "message": "All logs purged successfully",
-            "deleted_count": deleted_count
+            "message": "Logs and inactive nodes purged successfully",
+            "deleted_count": deleted_logs,
+            "deleted_agents": deleted_agents
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Purge failed: {str(e)}")
@@ -405,12 +393,11 @@ async def get_alerts(
     try:
         time_filter = datetime.utcnow() - timedelta(hours=hours)
         
-        # Strictly filter by Failed Login (4625) or Admin Privileges (4672)
-        # OR any log that has been classified as "critical" or "priority"
+        # ONLY return logs that have been classified as "critical" or "priority"
+        # (which now only happens for custom rules)
         filters = {
             "timestamp": {"$gte": time_filter},
             "$or": [
-                {"event_id": {"$in": [4625, 4672, "4625", "4672"]}},
                 {"severity": "critical"},
                 {"is_priority": True}
             ]

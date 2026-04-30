@@ -100,24 +100,11 @@ class SeverityEngine:
         if str(event_id) in self.custom_rules:
             return "critical"
 
-        # 1. Check for CRITICAL Event IDs (Windows-specific)
-        critical_ids = [666, 4625, 1102, "666", "4625", "1102"]
-        if event_id in critical_ids:
-            return "critical"
-        
-        # Check for critical-severity keywords (scanned in raw_log)
-        if any(keyword in raw_log for keyword in self.critical_keywords):
-            return "critical"
-            
-        # 2. Check for HIGH severity
-        if self._is_high_severity(log_data, event, log_type):
-            return "high"
-        
-        # 3. Check for MEDIUM severity
+        # 1. Check for MEDIUM severity (High/Critical hardcoded rules disabled per requirements)
         if self._is_medium_severity(log_data, event, log_type):
             return "medium"
         
-        # 4. Check for LOW severity
+        # 2. Check for LOW severity
         if self._is_low_severity(log_data, event, log_type):
             return "low"
         

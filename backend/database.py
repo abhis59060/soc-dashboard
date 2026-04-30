@@ -431,6 +431,21 @@ class Database:
                 
         return agents
 
+    async def delete_offline_agents(self) -> int:
+        """
+        Delete agents that are currently offline or haven't sent heartbeats recently.
+        Uses a 30-second threshold consistent with the status display logic.
+        """
+        threshold = datetime.utcnow() - timedelta(seconds=30)
+        result = await self.agents_collection.delete_many({
+            "$or": [
+                {"last_seen": {"$lt": threshold}},
+                {"last_seen": None},
+                {"status": "offline"}
+            ]
+        })
+        return result.deleted_count
+
     async def reset_agents(self):
         """Reset agent alert counts and status (keep the hostnames)"""
         await self.agents_collection.update_many(
