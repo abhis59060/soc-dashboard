@@ -10,17 +10,12 @@ from datetime import datetime, timedelta
 class SeverityEngine:
     """
     Classifies security events by severity level
-    
-    Severity Levels:
-    - CRITICAL: Active malware or high-priority threats
-    - HIGH: Critical security events requiring immediate attention
-    - MEDIUM: Suspicious activity requiring investigation
-    - LOW: Notable events for awareness
-    - INFO: Normal operational events
     """
     
-    def __init__(self):
+    def __init__(self, db=None):
         """Initialize severity classification rules"""
+        self.db = db
+        self.custom_rules = []
         # Critical-severity keywords (scanned in raw_log)
         self.critical_keywords = [
             "virus",
@@ -77,6 +72,13 @@ class SeverityEngine:
         # Threshold for brute-force detection
         self.failed_login_threshold = 5  # Failed attempts in time window
         self.time_window_minutes = 5
+
+    async def update_rules(self):
+        """Fetch latest alert rules from database"""
+        if self.db:
+            rules = await self.db.get_alert_rules()
+            self.custom_rules = [str(r["event_id"]) for r in rules]
+            print(f"🔄 SeverityEngine updated with {len(self.custom_rules)} custom rules")
     
     def classify(self, log_data: Dict[str, Any]) -> str:
         """
@@ -92,6 +94,11 @@ class SeverityEngine:
         event = log_data.get("event", "").lower()
         log_type = log_data.get("log_type", "").lower()
         event_id = log_data.get("event_id")
+
+        # 0. Check CUSTOM RULES FIRST (User-defined overrides from MongoDB)
+        # If Event ID matches a custom rule, it is always CRITICAL
+        if str(event_id) in self.custom_rules:
+            return "critical"
 
         # 1. Check for CRITICAL Event IDs (Windows-specific)
         critical_ids = [666, 4625, 1102, "666", "4625", "1102"]

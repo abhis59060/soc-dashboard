@@ -24,6 +24,7 @@ class Database:
         self.alerts_collection = None
         self.security_alerts_collection = None
         self.stats_collection = None
+        self.rules_collection = None
     
     async def connect(self):
         """Establish connection to MongoDB"""
@@ -39,6 +40,7 @@ class Database:
             self.alerts_collection = self.db.alerts
             self.security_alerts_collection = self.db.security_alerts
             self.stats_collection = self.db.statistics
+            self.rules_collection = self.db.alert_rules
             
             # Create indexes for performance
             await self._create_indexes()
@@ -445,11 +447,18 @@ class Database:
 
     async def clear_all_logs(self) -> int:
         """
-        Delete ALL logs from the collection and reset agents
+        Delete ALL logs, alerts, and stats from the database and reset agents
         """
-        result = await self.logs_collection.delete_many({})
+        # Delete from all relevant collections
+        log_result = await self.logs_collection.delete_many({})
+        await self.alerts_collection.delete_many({})
+        await self.security_alerts_collection.delete_many({})
+        await self.stats_collection.delete_many({})
+        
+        # Reset agents
         await self.reset_agents()
-        return result.deleted_count
+        
+        return log_result.deleted_count
     
     async def get_timeline_data(self, time_filter: datetime) -> List[Dict[str, Any]]:
         """Get log counts grouped by hour for the last 24 hours"""
@@ -605,3 +614,44 @@ class Database:
             filters={"host": hostname, "timestamp": {"$gte": time_filter}},
             limit=1000
         )
+
+    async def get_alert_rules(self) -> List[Dict[str, Any]]:
+        """Retrieve all custom alert rules"""
+        cursor = self.rules_collection.find({})
+        rules = await cursor.to_list(length=100)
+        for rule in rules:
+            rule["_id"] = str(rule["_id"])
+        return rules
+
+    async def add_alert_rule(self, rule_data: Dict[str, Any]):
+        """Add or update an alert rule"""
+        await self.rules_collection.update_one(
+            {"event_id": str(rule_data["event_id"])},
+            {"$set": {
+                "description": rule_data.get("description"),
+                "created_at": datetime.utcnow()
+            }},
+            upsert=True
+        )
+
+    async def delete_alert_rule(self, event_id: str) -> bool:
+        """
+        Delete an alert rule by event_id (tries both string and int formats)
+        
+        Returns:
+            True if a document was deleted, False otherwise
+        """
+        try:
+            # Try matching both string and integer versions to be robust
+            eid_str = str(event_id)
+            eid_int = None
+            try:
+                eid_int = int(event_id)
+            except ValueError:
+                pass
+
+            query = {"event_id": {"$in": [eid_str, eid_int]}} if eid_int is not None else {"event_id": eid_str}
+            result = await self.rules_collection.delete_one(query)
+            return result.deleted_count > 0
+        except Exception:
+            return False

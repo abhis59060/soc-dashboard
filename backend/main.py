@@ -9,7 +9,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 import uvicorn
 
-from models import LogEntry, LogResponse, StatsResponse, AlertResponse, Heartbeat
+from models import LogEntry, LogResponse, StatsResponse, AlertResponse, Heartbeat, AlertRuleCreate
 from database import Database
 from log_processor import LogProcessor
 from severity_engine import SeverityEngine
@@ -37,14 +37,15 @@ app.add_middleware(
 # Initialize components
 db = Database()
 log_processor = LogProcessor()
-severity_engine = SeverityEngine()
+severity_engine = SeverityEngine(db=db)
 
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database connection on startup"""
+    """Initialize database connection and severity rules on startup"""
     await db.connect()
-    print("✅ Connected to MongoDB")
+    await severity_engine.update_rules()
+    print("✅ Connected to MongoDB and updated severity rules")
 
 
 @app.on_event("shutdown")
@@ -92,11 +93,16 @@ async def ingest_log(log_entry: LogEntry):
         # Normalize log format
         normalized_log = log_processor.normalize(log_entry.dict())
         
+        # Check if it matches a custom rule from MongoDB (fetch the event_id)
+        event_id_str = str(normalized_log.get("event_id"))
+        is_custom_rule = event_id_str in severity_engine.custom_rules
+        
         # Assign severity level
         severity = severity_engine.classify(normalized_log)
         normalized_log["severity"] = severity
+        normalized_log["is_custom_rule"] = is_custom_rule
         
-        # Set priority flag for critical threats (Virus, Malware, etc.)
+        # Set priority flag for critical threats
         normalized_log["is_priority"] = (severity == "critical")
         
         # Store in database
@@ -106,12 +112,17 @@ async def ingest_log(log_entry: LogEntry):
         should_alert = False
         alert_reason = ""
         
-        # 1. Immediate Alert for Event 666 (Malicious Activity)
-        if normalized_log.get("event_id") in [666, "666"]:
+        # 1. Custom Alert Rule Match (Highest Priority)
+        if is_custom_rule:
+            should_alert = True
+            alert_reason = f"Custom Alert Rule Triggered: Event ID {event_id_str}"
+
+        # 2. Immediate Alert for Event 666 (Malicious Activity)
+        elif normalized_log.get("event_id") in [666, "666"]:
             should_alert = True
             alert_reason = "Confirmed Malicious Activity (Event 666)"
         
-        # 2. Brute-Force Detection: > 5 Event 4625 (Failed Login) within 1 minute for same host
+        # 3. Brute-Force Detection: > 5 Event 4625 (Failed Login) within 1 minute for same host
         elif normalized_log.get("event_id") in [4625, "4625"]:
             one_min_ago = datetime.utcnow() - timedelta(minutes=1)
             failed_count = await db.logs_collection.count_documents({
@@ -159,25 +170,14 @@ async def get_logs(
     log_type: Optional[str] = Query(None, description="Filter by log type"),
     host: Optional[str] = Query(None, description="Filter by hostname"),
     event_id: Optional[str] = Query(None, description="Filter by Event ID"),
+    user: Optional[str] = Query(None, description="Filter by User"),
+    search: Optional[str] = Query(None, description="Search across Event ID, User, and Message"),
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(100, description="Number of logs to return"),
     skip: int = Query(0, description="Number of logs to skip")
 ):
     """
     Retrieve logs with filtering options
-    
-    Args:
-        os_type: Operating system filter
-        severity: Severity level filter
-        log_type: Type of log (auth, system, firewall, etc.)
-        host: Hostname filter
-        event_id: Event ID filter
-        hours: Time range to query
-        limit: Maximum number of results
-        skip: Pagination offset
-    
-    Returns:
-        Filtered logs with metadata
     """
     try:
         # Build filter query
@@ -186,7 +186,7 @@ async def get_logs(
         if os_type:
             filters["os"] = os_type.lower()
         
-        if severity:
+        if severity and severity.lower() != "all":
             filters["severity"] = severity.lower()
         
         if log_type:
@@ -195,13 +195,31 @@ async def get_logs(
         if host:
             filters["host"] = host
             
+        if user:
+            filters["user"] = {"$regex": user, "$options": "i"}
+
         if event_id:
-            # Handle Event ID as both int and string to be safe
             try:
                 eid_int = int(event_id)
                 filters["event_id"] = {"$in": [eid_int, str(eid_int)]}
             except ValueError:
                 filters["event_id"] = event_id
+
+        if search:
+            search_regex = {"$regex": search, "$options": "i"}
+            filters["$or"] = [
+                {"event_id": search},
+                {"user": search_regex},
+                {"raw_log": search_regex},
+                {"event": search_regex},
+                {"host": search_regex}
+            ]
+            # Handle numeric event_id in search if applicable
+            try:
+                search_int = int(search)
+                filters["$or"].append({"event_id": search_int})
+            except ValueError:
+                pass
         
         # Time filter
         time_filter = datetime.utcnow() - timedelta(hours=hours)
@@ -279,6 +297,22 @@ async def get_system_stats(host: Optional[str] = None):
         "status": "online",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.delete("/api/logs/purge")
+async def purge_logs():
+    """
+    Delete ALL logs from the database.
+    """
+    try:
+        deleted_count = await db.clear_all_logs()
+        return {
+            "status": "success",
+            "message": "All logs purged successfully",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Purge failed: {str(e)}")
 
 
 @app.delete("/api/logs/{log_id}")
@@ -447,6 +481,22 @@ async def get_network_health():
         return {**health, **stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+@app.delete("/api/system/purge")
+async def purge_all_data():
+    """
+    CRITICAL: Delete ALL logs, alerts, and reset agent statistics.
+    Used for clearing the dashboard for new sessions.
+    """
+    try:
+        deleted_count = await db.clear_all_logs()
+        return {
+            "status": "success",
+            "message": "System purge successful. All logs and alerts removed.",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Purge failed: {str(e)}")
+
 @app.delete("/api/logs/clear")
 async def clear_old_logs(days: int = Query(30, description="Delete logs older than X days")):
     """
@@ -484,6 +534,42 @@ async def get_agents():
         return agents
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve agents: {str(e)}")
+
+
+@app.get("/api/rules")
+async def get_rules():
+    """Retrieve all custom alert rules"""
+    try:
+        return await db.get_alert_rules()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch rules: {str(e)}")
+
+
+@app.post("/api/rules")
+async def add_rule(rule: AlertRuleCreate):
+    """Add or update an alert rule"""
+    try:
+        await db.add_alert_rule(rule.dict())
+        await severity_engine.update_rules()
+        return {"status": "success", "message": f"Rule for {rule.event_id} added"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add rule: {str(e)}")
+
+
+@app.delete("/api/rules/{event_id}")
+async def delete_rule(event_id: str):
+    """Delete an alert rule"""
+    try:
+        success = await db.delete_alert_rule(event_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Rule for event_id {event_id} not found")
+            
+        await severity_engine.update_rules()
+        return {"status": "success", "message": f"Rule for {event_id} removed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete rule: {str(e)}")
 
 
 @app.get("/api/nodes/stats")

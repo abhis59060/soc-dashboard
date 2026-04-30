@@ -175,6 +175,17 @@ class FirewallLog(BaseModel):
     direction: Optional[str] = None  # IN, OUT
 
 
+class AlertRule(BaseModel):
+    """Alert configuration rule"""
+    event_id: str
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class AlertRuleCreate(BaseModel):
+    """Model for creating a new alert rule"""
+    event_id: str
+    description: Optional[str] = None
+
 class ThreatIndicator(BaseModel):
     """Threat indicator for pattern matching"""
     indicator_type: str  # ip, domain, hash, pattern

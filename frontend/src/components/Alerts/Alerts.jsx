@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Filter, AlertTriangle, CheckCircle, Archive, Loader2 } from 'lucide-react';
+import { Bell, Filter, AlertTriangle, CheckCircle, Archive, Loader2, Settings2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { AlertCard } from './AlertCard';
 import { getAlerts, dismissAlert } from '../../api';
 import { useAlerts } from '../../context/AlertContext';
+import { AlertRulesModal } from '../Dashboard/AlertRulesModal';
 
 export const Alerts = () => {
   const [alerts, setAlerts] = useState([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isRulesOpen, setIsRulesOpen] = useState(false);
   const prevAlertIds = useRef(new Set());
   const { alertCount, severityCounts, setAlertCount, refreshAlertCount } = useAlerts();
 
@@ -176,6 +178,15 @@ export const Alerts = () => {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
+            onClick={() => setIsRulesOpen(true)}
+            className="px-4 py-2 bg-soc-primary/10 border border-soc-primary/30 rounded-lg text-sm text-soc-primary hover:bg-soc-primary/20 transition-colors flex items-center gap-2"
+          >
+            <Settings2 size={16} />
+            Configure Alerts
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             className="px-4 py-2 bg-soc-darker border border-soc-border rounded-lg text-sm text-gray-300 hover:text-white hover:border-soc-primary transition-colors flex items-center gap-2"
           >
             <Archive size={16} />
@@ -256,6 +267,11 @@ export const Alerts = () => {
           <p className="text-gray-400">Your systems are currently secure.</p>
         </motion.div>
       )}
+
+      <AlertRulesModal 
+        isOpen={isRulesOpen} 
+        onClose={() => setIsRulesOpen(false)} 
+      />
     </div>
   );
 };

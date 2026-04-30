@@ -89,6 +89,22 @@ export const clearLogs = async (params = {}) => {
 };
 
 /**
+ * Purge all logs from the database
+ */
+export const purgeLogs = async () => {
+  const response = await api.delete('/api/logs/purge');
+  return response.data;
+};
+
+/**
+ * Purge all system data (logs, alerts, stats)
+ */
+export const purgeData = async () => {
+  const response = await api.delete('/api/system/purge');
+  return response.data;
+};
+
+/**
  * Get all tracked agents and their status
  */
 export const getAgents = async () => {
@@ -118,6 +134,30 @@ export const getNetworkHealth = async () => {
 export const getSystemStats = async (host = null) => {
   const params = host ? { host } : {};
   const response = await api.get('/api/system/stats', { params });
+  return response.data;
+};
+
+/**
+ * Get all custom alert rules
+ */
+export const getRules = async () => {
+  const response = await api.get('/api/rules');
+  return response.data;
+};
+
+/**
+ * Add or update an alert rule
+ */
+export const addRule = async (ruleData) => {
+  const response = await api.post('/api/rules', ruleData);
+  return response.data;
+};
+
+/**
+ * Delete an alert rule by event_id
+ */
+export const deleteRule = async (eventId) => {
+  const response = await api.delete(`/api/rules/${eventId}`);
   return response.data;
 };
 

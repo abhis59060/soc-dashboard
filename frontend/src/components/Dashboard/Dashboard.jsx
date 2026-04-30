@@ -12,14 +12,15 @@ import {
   Wifi,
   WifiOff,
   Skull,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { AlertChart } from './AlertChart';
 import { LogTimeline } from './LogTimeline';
 import { ThreatMap } from '../../common/ThreatMap';
 import { HostModal } from '../../common/HostModal';
-import { getStats, getLogs, getAgents, getNetworkHealth, getNodes, getTimeline } from '../../api';
+import { getStats, getLogs, getAgents, getNetworkHealth, getNodes, getTimeline, purgeData } from '../../api';
 
 export const Dashboard = () => {
   const navigate = useNavigate();
@@ -44,6 +45,23 @@ export const Dashboard = () => {
   const [globalAlert, setGlobalAlert] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isPurging, setIsPurging] = useState(false);
+
+  const handlePurge = async () => {
+    if (window.confirm("CRITICAL: This will delete all logs, alerts, and reset all system statistics. Are you sure?")) {
+      setIsPurging(true);
+      try {
+        await purgeData();
+        // Force refresh data
+        window.location.reload();
+      } catch (err) {
+        console.error("Purge failed:", err);
+        alert("Failed to purge system data.");
+      } finally {
+        setIsPurging(false);
+      }
+    }
+  };
 
   // Audio Feedback
   const playAlertSound = () => {
@@ -263,7 +281,17 @@ export const Dashboard = () => {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            className="px-4 py-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm font-medium hover:bg-red-500/20 transition-colors flex items-center gap-2"
+            onClick={handlePurge}
+            disabled={isPurging}
+            className="px-4 py-2 bg-red-600/20 border border-red-500/50 text-red-500 rounded-lg text-sm font-bold hover:bg-red-600/30 transition-colors flex items-center gap-2"
+          >
+            {isPurging ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+            Purge Data
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="px-4 py-2 bg-soc-primary/10 border border-soc-primary/30 text-soc-primary rounded-lg text-sm font-medium hover:bg-soc-primary/20 transition-colors flex items-center gap-2"
           >
             <FileWarning size={16} />
             Export Audit

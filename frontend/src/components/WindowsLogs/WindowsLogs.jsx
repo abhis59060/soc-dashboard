@@ -5,7 +5,8 @@ import { Monitor, Trash2, AlertTriangle, Loader2, X, Server, Info, ChevronDown, 
 import { LogTable } from '../../common/LogTable';
 import { SeverityBadge } from '../../common/SeverityBadge';
 import { format } from 'date-fns';
-import { getLogs, clearLogs, getNodes, deleteLog } from '../../api';
+import { getLogs, purgeLogs, getNodes, deleteLog } from '../../api';
+import toast from 'react-hot-toast';
 
 export const WindowsLogs = () => {
   const location = useLocation();
@@ -56,11 +57,19 @@ export const WindowsLogs = () => {
   }, [filterHost]);
 
   useEffect(() => {
-    const fetchLogs = async () => {
+    const fetchLogs = async (isInitial = false) => {
       try {
-        // Raw Autonomous Fetch: Fetch latest 100 logs for the host
-        const params = { os_type: 'windows', limit: 100 };
-        if (filterHost) params.host = filterHost;
+        if (isInitial) setLoading(true);
+        
+        // Raw Autonomous Fetch: Fetch latest 100 logs with active filters
+        const params = { 
+          os_type: 'windows', 
+          limit: 100,
+          severity: filterSeverity !== 'All' ? filterSeverity : undefined,
+          host: filterHost || undefined,
+          search: searchEventId || undefined,
+          event_id: filterEventId || undefined
+        };
         
         const response = await getLogs(params);
         if (response && response.logs) {
@@ -76,35 +85,56 @@ export const WindowsLogs = () => {
             user: log.user || 'SYSTEM',
             ip: log.source_ip || 'N/A',
             severity: log.severity,
+            is_custom: log.is_custom_rule,
             isNew: (now - new Date(log.timestamp).getTime()) < 30000,
             isAcknowledged: false
           }));
 
           setLogs(prevLogs => {
+            // If host or severity changed, we might want to start fresh or just merge
+            // For host/severity change, initial fetch is usually called
+            if (isInitial) return incoming;
+
             const existingIds = new Set(prevLogs.map(l => l.id));
             const newLogs = incoming.filter(l => !existingIds.has(l.id));
             
-            // Heartbeat update on actual data arrival
             if (newLogs.length > 0) {
               setLastLogTimestamp(Date.now());
+              
+              // Trigger specific notifications for custom rules matching the requested Event ID
+              newLogs.forEach(log => {
+                if (log.is_custom) {
+                  toast.error(`CUSTOM RULE MATCH: Event ${log.event_id} detected on ${log.computer}`, {
+                    duration: 5000,
+                    style: {
+                      background: '#1a1a2e',
+                      color: '#ff4d4d',
+                      border: '1px solid #ff4d4d33',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    },
+                    icon: '🚨'
+                  });
+                }
+              });
             }
 
-            // Engine: Prepend and slice to 100
             return [...newLogs, ...prevLogs].slice(0, 100);
           });
           setError(null);
         }
       } catch (error) {
         console.error("Fetch Engine Error:", error);
+        setError("Failed to sync with security engine.");
       } finally {
-        setLoading(false);
+        if (isInitial) setLoading(false);
       }
     };
 
-    fetchLogs();
-    const engineId = setInterval(fetchLogs, 5000);
+    fetchLogs(true);
+    const engineId = setInterval(() => fetchLogs(false), 5000);
     return () => clearInterval(engineId);
-  }, [filterHost]);
+  }, [filterHost, filterSeverity, searchEventId, filterEventId]);
 
   // Status and Idle Logic
   useEffect(() => {
@@ -125,7 +155,7 @@ export const WindowsLogs = () => {
     if (!window.confirm("Purge all logs?")) return;
     try {
       setIsClearing(true);
-      await clearLogs({ days: 0 });
+      await purgeLogs();
       setLogs([]);
     } catch (err) {
       alert("Purge failed.");
