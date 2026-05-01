@@ -100,11 +100,15 @@ class SeverityEngine:
         if str(event_id) in self.custom_rules:
             return "critical"
 
-        # 1. Check for MEDIUM severity (High/Critical hardcoded rules disabled per requirements)
+        # 1. Check for HIGH severity
+        if self._is_high_severity(log_data, event, log_type):
+            return "high"
+
+        # 2. Check for MEDIUM severity
         if self._is_medium_severity(log_data, event, log_type):
             return "medium"
         
-        # 2. Check for LOW severity
+        # 3. Check for LOW severity
         if self._is_low_severity(log_data, event, log_type):
             return "low"
         

@@ -67,7 +67,8 @@ export const AlertProvider = ({ children }) => {
       alertCount, 
       severityCounts, 
       setAlertCount, 
-      refreshAlertCount: fetchData 
+      refreshAlertCount: fetchData,
+      refreshAllData: fetchData
     }}>
       {children}
     </AlertContext.Provider>

@@ -14,7 +14,7 @@ export const Alerts = () => {
   const [error, setError] = useState(null);
   const [isRulesOpen, setIsRulesOpen] = useState(false);
   const prevAlertIds = useRef(new Set());
-  const { alertCount, severityCounts, setAlertCount, refreshAlertCount } = useAlerts();
+  const { alertCount, severityCounts, setAlertCount, refreshAlertCount, refreshAllData } = useAlerts();
 
   const handleDismiss = async (alertId) => {
     try {
@@ -24,8 +24,8 @@ export const Alerts = () => {
       // Backend call
       await dismissAlert(alertId);
       
-      // Refresh global stats
-      refreshAlertCount();
+      // Refresh global stats across Sidebar and Dashboard
+      refreshAllData();
       
       toast.success("Alert dismissed successfully", {
         style: {
@@ -72,30 +72,18 @@ export const Alerts = () => {
         if (!isInitial) {
           formattedAlerts.forEach(alert => {
             if (!prevAlertIds.current.has(alert.id)) {
-              const isCriticalEvent = 
-                alert.severity === 'high' || 
-                alert.severity === 'critical' ||
-                alert.is_priority ||
-                alert.event_id === 4625 || 
-                alert.event_id === 4672 ||
-                alert.event_id === '4625' || 
-                alert.event_id === '4672';
-
-              if (isCriticalEvent) {
-                let message = `CRITICAL: ${alert.title} detected on ${alert.target}`;
-                if (alert.event_id === 4625 || alert.event_id === '4625') message = `CRITICAL: Failed Login detected on ${alert.target}`;
-                if (alert.event_id === 4672 || alert.event_id === '4672') message = `CRITICAL: Admin Privileges detected on ${alert.target}`;
-                
-                toast.error(message, {
-                  duration: 5000,
-                  position: 'top-right',
-                  style: {
-                    background: '#1a1a1a',
-                    color: '#ff4d4d',
-                    border: '1px solid #ff4d4d33'
-                  }
-                });
-              }
+              // Since the backend only returns configured alerts, anything here is critical
+              const message = `CRITICAL: ${alert.title} detected on ${alert.target}`;
+              
+              toast.error(message, {
+                duration: 5000,
+                position: 'top-right',
+                style: {
+                  background: '#1a1a1a',
+                  color: '#ff4d4d',
+                  border: '1px solid #ff4d4d33'
+                }
+              });
             }
           });
         }

@@ -44,8 +44,10 @@ severity_engine = SeverityEngine(db=db)
 async def startup_event():
     """Initialize database connection and severity rules on startup"""
     await db.connect()
+    # Sync configured_event_ids from alert_rules to settings collection
+    await db.sync_configured_event_ids()
     await severity_engine.update_rules()
-    print("✅ Connected to MongoDB and updated severity rules")
+    print("✅ Connected to MongoDB, synced settings, and updated severity rules")
 
 
 @app.on_event("shutdown")
@@ -315,23 +317,23 @@ async def delete_log(log_id: str):
 @app.get("/api/stats", response_model=StatsResponse)
 async def get_statistics(hours: int = Query(24, description="Time range in hours")):
     """
-    Get dashboard statistics
-    
-    Args:
-        hours: Time range for statistics
-    
-    Returns:
-        Aggregated statistics for dashboard
+    Get dashboard statistics (Alert counts respect configured Event IDs)
     """
     try:
         time_filter = datetime.utcnow() - timedelta(hours=hours)
+        configured_ids = await db.get_configured_event_ids()
+        
+        # Base filter for Alert Counts (must be in configured IDs)
+        alert_filters = {
+            "timestamp": {"$gte": time_filter},
+            "severity": {"$in": ["high", "critical"]},
+            "event_id": {"$in": [int(eid) if eid.isdigit() else eid for eid in configured_ids] + configured_ids}
+        }
         
         # Get counts by severity
         total_logs = await db.count_logs({"timestamp": {"$gte": time_filter}})
-        high_severity = await db.count_logs({
-            "timestamp": {"$gte": time_filter},
-            "severity": "high"
-        })
+        high_severity = await db.count_logs(alert_filters)
+        
         medium_severity = await db.count_logs({
             "timestamp": {"$gte": time_filter},
             "severity": "medium"
@@ -380,27 +382,17 @@ async def get_alerts(
     limit: int = Query(50, description="Number of alerts")
 ):
     """
-    Get security alerts (Failed Logins & Admin Privileges)
-    
-    Args:
-        severity: Severity filter
-        hours: Time range
-        limit: Maximum alerts
-    
-    Returns:
-        Security alerts for specific critical event IDs
+    Get security alerts (Filtered by configured Event IDs from settings)
     """
     try:
         time_filter = datetime.utcnow() - timedelta(hours=hours)
+        configured_ids = await db.get_configured_event_ids()
         
-        # ONLY return logs that have been classified as "critical" or "priority"
-        # (which now only happens for custom rules)
+        # ONLY return logs that match the configured Event IDs and are high/critical
         filters = {
             "timestamp": {"$gte": time_filter},
-            "$or": [
-                {"severity": "critical"},
-                {"is_priority": True}
-            ]
+            "severity": {"$in": ["high", "critical"]},
+            "event_id": {"$in": [int(eid) if eid.isdigit() else eid for eid in configured_ids] + configured_ids}
         }
         
         if severity:
@@ -421,16 +413,15 @@ async def get_alerts(
 @app.delete("/api/alerts/{alert_id}")
 async def dismiss_alert(alert_id: str):
     """
-    Dismiss a specific alert by ID
+    Mark an alert as dismissed (soft delete)
     
     Args:
-        alert_id: The ID of the alert to remove
+        alert_id: The ID of the alert to dismiss
     """
     try:
-        from bson.objectid import ObjectId
-        result = await db.logs_collection.delete_one({"_id": ObjectId(alert_id)})
+        success = await db.update_log_status(alert_id, "dismissed")
         
-        if result.deleted_count == 0:
+        if not success:
             raise HTTPException(status_code=404, detail="Alert not found")
             
         return {"status": "success", "message": "Alert dismissed"}
@@ -446,6 +437,19 @@ async def get_unread_alert_count():
         return {"count": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get unread count: {str(e)}")
+
+
+@app.get("/api/alerts/recent")
+async def get_recent_alerts():
+    """
+    Get the last 5 high-severity logs and node status changes.
+    Used for the frontend notification bell.
+    """
+    try:
+        notifications = await db.get_recent_notifications(limit=5)
+        return notifications
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch recent notifications: {str(e)}")
 
 
 @app.get("/api/logs/timeline")

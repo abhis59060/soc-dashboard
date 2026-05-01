@@ -22,8 +22,11 @@ import { ThreatMap } from '../../common/ThreatMap';
 import { HostModal } from '../../common/HostModal';
 import { getStats, getLogs, getAgents, getNetworkHealth, getNodes, getTimeline, purgeData } from '../../api';
 
+import { useAlerts } from '../../context/AlertContext';
+
 export const Dashboard = () => {
   const navigate = useNavigate();
+  const { refreshAllData } = useAlerts();
   const [stats, setStats] = useState({
     totalLogs: 0,
     highAlerts: 0,

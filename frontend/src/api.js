@@ -57,6 +57,14 @@ export const getAlerts = async (params = {}) => {
 };
 
 /**
+ * Get the last 5 high-severity logs and node status changes
+ */
+export const getRecentAlerts = async () => {
+  const response = await api.get('/api/alerts/recent');
+  return response.data;
+};
+
+/**
  * Get count of unread security alerts
  */
 export const getUnreadAlertCount = async () => {
